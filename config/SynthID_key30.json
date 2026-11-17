@@ -1,0 +1,1 @@
+{"algorithm_name": "SynthID", "ngram_len": 5, "keys": [552, 827, 296, 625, 30, 636, 669, 846, 215, 263, 49, 406, 385, 656, 137, 83, 472, 7, 534, 954, 248, 26, 74, 163, 930, 862, 835, 613, 543, 939], "sampling_table_size": 65536, "sampling_table_seed": 0, "context_history_size": 1024, "detector_type": "mean", "threshold": 0.52}

@@ -23,50 +23,59 @@ from watermark.auto_watermark import AutoWatermark
 from utils.transformers_config import TransformersConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-
-# Load data
+#Carica tutte le righe ma prende solo la prima, interpretandola come JSON
 with open('dataset/c4/processed_c4.json', 'r') as f:
     lines = f.readlines()
 item = json.loads(lines[0])
 prompt = item['prompt']
 natural_text = item['natural_text']
 
-
+#Crea una funzione che riceve il nome dell'algoritmo
 def test_algorithm(algorithm_name):
-    # Check algorithm name
-    assert algorithm_name in ['KGW', 'Unigram', 'SWEET', 'EWD', 'SIR', 'XSIR', 'DIP', 'Unbiased', 
-                              'UPV', 'TS', 'SynthID', 'EXP', 'EXPGumbel', 'EXPEdit','ITSEdit']
+    #Evita di passare un nome che MarkLLM non conosce
+    assert algorithm_name in ['KGW', 'Unigram', 'SWEET', 'EWD', 'SIR', 'XSIR', 'DIP', 'Unbiased',
+                              'UPV', 'TS', 'SynthID', 'EXP', 'EXPGumbel', 'EXPEdit', 'ITSEdit']
 
-    # Device
+    #Controlla se è disponibile una GPU CUDA
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    # Transformers config
-    transformers_config = TransformersConfig(model=AutoModelForCausalLM.from_pretrained("/data2/shared_model/facebook/opt-1.3b/").to(device),
-                                            tokenizer=AutoTokenizer.from_pretrained("/data2/shared_model/facebook/opt-1.3b/"),
-                                            vocab_size=50272,
-                                            device=device,
-                                            max_new_tokens=200,
-                                            min_length=230,
-                                            do_sample=True,
-                                            no_repeat_ngram_size=4)
-    
-    # Load watermark algorithm
-    myWatermark = AutoWatermark.load(f'{algorithm_name}', 
+
+    transformers_config = TransformersConfig(
+        #Carica il language model
+        model=AutoModelForCausalLM.from_pretrained("/data2/shared_model/facebook/opt-1.3b/").to(device),
+        #Carica il token corrispondente
+        tokenizer=AutoTokenizer.from_pretrained("/data2/shared_model/facebook/opt-1.3b/"),
+        vocab_size=50272,
+        device=device,
+        #Il modello può generare al massimo 200 nuovi token
+        max_new_tokens=200,
+        #Richiede una lunghezza minima nella generazione
+        min_length=230,
+        #La generazione non usa greedy decoding
+        do_sample=True,
+        #Impedisce la ripetizione dello stesso 4-gram
+        no_repeat_ngram_size=4)
+
+    #Carica l'algoritmo di watermark
+    myWatermark = AutoWatermark.load(f'{algorithm_name}',
                                      algorithm_config=f'config/{algorithm_name}.json',
                                      transformers_config=transformers_config)
 
+    #Generazione del testo con watermark
     watermarked_text = myWatermark.generate_watermarked_text(prompt)
     print(watermarked_text)
+    #Generazione del testo senza watermark
     unwatermarked_text = myWatermark.generate_unwatermarked_text(prompt)
+
+    #Il testo watermarkato dovrebbe essere rilevato
     detect_result = myWatermark.detect_watermark(watermarked_text)
     print(detect_result)
+    #Il testo generato senza watermark dovrebbe essere molto meno compatibile
     detect_result = myWatermark.detect_watermark(unwatermarked_text)
     print(detect_result)
+    #Il testo naturale del dataset subisce un ulteriore controllo
     detect_result = myWatermark.detect_watermark(natural_text)
     print(detect_result)
 
 
 if __name__ == '__main__':
     test_algorithm('SynthID')
-
-

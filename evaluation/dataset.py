@@ -19,20 +19,26 @@
 
 import json
 
-from dataset.markmywords.generation_prompts import raw_prompts
-from dataset.markmywords.generation_prompts_train import get_random_prompts
+import random
+import re
 
+from dataset.markmywords.generation_prompts import raw_prompts
+
+from datasets import Dataset as HFDataset
+from dataset.markmywords.generation_prompts_train import all_prompts as all_train_prompts
+
+#Indicazione di lunghezza aggiunta ai prompt di training
+LENGTH_HINT = " Respond in approximately 150 tokens."
+
+#Cerca nel testo del prompt le parole di codice e li scartano
+NON_PROSE = re.compile(r'\b(python|javascript|java|c\+\+|sql|function|implement|code|script|program|class|algorithm|regex|bash|shell|html|css|api)\b', re.I)
+#Cerca nel testo del prompt le parole che danno un ruolo e li scartano
+NON_PROSE_ROLE = re.compile(r'programmer|software|developer|engineer', re.I)
 
 class BaseDataset:
     """Base class for dataset."""
-
     def __init__(self, max_samples: int = 200):
-        """
-        Initialize the dataset.
-        
-        Parameters:
-            max_samples (int): Maximum number of samples to load. Default is 200.
-        """
+        """Initialize the dataset."""
         self.max_samples = max_samples
         self.prompts = []
         self.natural_texts = []
@@ -69,17 +75,10 @@ class BaseDataset:
         """Load and process data to populate prompts, natural_texts, and references."""
         pass
 
-
 class C4Dataset(BaseDataset):
     """Dataset class for C4 dataset."""
-
     def __init__(self, data_source: str, max_samples: int = 200):
-        """
-            Initialize the C4 dataset.
-
-            Parameters:
-                data_source (str): The path to the C4 dataset file.
-        """
+        """Initialize the C4 dataset."""
         super().__init__(max_samples)
         self.data_source = data_source
         self.load_data()
@@ -93,17 +92,10 @@ class C4Dataset(BaseDataset):
             self.prompts.append(item['prompt'])
             self.natural_texts.append(item['natural_text'])
 
-
 class WMT16DE_ENDataset(BaseDataset):
     """Dataset class for WMT16 DE-EN dataset."""
-
     def __init__(self, data_source: str, max_samples: int = 200) -> None:
-        """
-            Initialize the WMT16 DE-EN dataset.
-
-            Parameters:
-                data_source (str): The path to the WMT16 DE-EN dataset file.
-        """
+        """Initialize the WMT16 DE-EN dataset."""
         super().__init__(max_samples)
         self.data_source = data_source
         self.load_data()
@@ -117,17 +109,10 @@ class WMT16DE_ENDataset(BaseDataset):
             self.prompts.append(item['de'])
             self.references.append(item['en'])
 
-
 class HumanEvalDataset(BaseDataset):
     """Dataset class for HumanEval dataset."""
-
     def __init__(self, data_source: str, max_samples: int = 200) -> None:
-        """
-            Initialize the HumanEval dataset.
-
-            Parameters:
-                data_source (str): The path to the HumanEval dataset file.
-        """
+        """Initialize the HumanEval dataset."""
         super().__init__(max_samples)
         self.data_source = data_source
         self.load_data()
@@ -150,17 +135,24 @@ class HumanEvalDataset(BaseDataset):
 
 class MarkMyWordsDataset(BaseDataset):
     """Dataset class for MarkMyWords dataset."""
-
-    def __init__(self, tokenizer, max_samples: int = 200, dataset="eval") -> None:
-        """
-            Initialize the MarkMyWords dataset.
-        """
+    def __init__(self, tokenizer, max_samples: int = 200, dataset="eval", seed: int = 42) -> None:
+        """Initialize the MarkMyWords dataset."""
         super().__init__(max_samples)
-        self.max_samples = min(max_samples, len(raw_prompts))
         if dataset == "eval":
+            self.max_samples = min(max_samples, len(raw_prompts))
             self.raw_prompts = raw_prompts[:self.max_samples]
         else:
-            self.raw_prompts = get_random_prompts(num_prompts=self.max_samples)
+            #Tiene solo i prompt in prosa (p è la richiesta e s è il ruolo)
+            prose = [(p,s) for p, s in all_train_prompts
+                     if not NON_PROSE.search(p) and not NON_PROSE_ROLE.search(s)]
+            self.max_samples = min(max_samples, len(prose))
+            #Fa una copia della lista da modificare
+            shuffled = list(prose)
+            #Crea un generatore di numeri casuali inizializzato con il seed e si mescola.
+            #Si usa un generatore separato così nessun altro codice che usa random può alterare il risultato
+            random.Random(seed).shuffle(shuffled)
+            #Costruisce sempre la stessa lista di 400 coppie a ogni esecuzione
+            self.raw_prompts = [(p + LENGTH_HINT, s) for p, s in shuffled[:self.max_samples]]
         self.prompts = [
             tokenizer.apply_chat_template(
                 [
@@ -169,10 +161,80 @@ class MarkMyWordsDataset(BaseDataset):
                 ],
                 tokenize=False,
                 add_generation_prompt=True,
+                #Disattiva la modalità di ragionamento che consuma i token di generazione
+                enable_thinking=False
             )
             for prompt, system_prompt in self.raw_prompts
         ]
 
+class PaperConclusionDataset(BaseDataset):
+    """Classe del dataset Paper Conclusion."""
+    SYSTEM_PROMPT = "You are a helpful assistant that writes academic text."
+    USER_PROMPT = (
+        "Below is the title, abstract, and introduction of an academic paper. "
+        "Write a conclusion summarizing its most important findings in "
+        "approximately 200 tokens. Output only the conclusion.\n\n"
+        "Title: {title}\n\nAbstract: {abstract}\n\nIntroduction: {introduction}"
+    )
+
+    def __init__(self, tokenizer, data_source: str, max_samples: int = 200,
+                 seed: int = 42, max_intro_tokens: int = 1500) -> None:
+        """Inizializza il dataset Paper Conclusion."""
+        super().__init__(max_samples)
+        self.tokenizer = tokenizer
+        self.data_source = data_source
+        #Seed dell'ordine dei paper: i risultati esistenti dipendono da quest'ordine
+        self.seed = seed
+        #Lunghezza massima dell'introduzione nel prompt in token
+        self.max_intro_tokens = max_intro_tokens
+        #Lista di prompt senza chat template (usata dal judge)
+        self.raw_prompts = []
+        #Lista di identificativi arXiv di ogni paper
+        self.arxiv_ids = []
+        self.load_data()
+
+    def load_data(self):
+        """Carica il file .arrow e prepara i prompt di tutti i paper."""
+        data = HFDataset.from_file(self.data_source)
+
+        #Posizioni dei paper nel file
+        indices = list(range(len(data)))
+        #Mescola le posizioni in modo casuale ma riproducibile con lo stesso seed
+        random.Random(self.seed).shuffle(indices)
+        #Tiene al massimo max_samples paper
+        indices = indices[:self.max_samples]
+
+        for idx in indices:
+            #Il paper alla posizione idx del file .arrow
+            item = data[idx]
+            #Tronca l'introduzione a max_intro_tokens (niente token speciali di inizio/fine)
+            intro_ids = self.tokenizer(item["introduction"], add_special_tokens=False, truncation=True, max_length=self.max_intro_tokens)["input_ids"]
+            #Riconverte i token rimasti in testo ottenendo l'introduzione troncata
+            introduction = self.tokenizer.decode(intro_ids, skip_special_tokens=True)
+            #Riempie il modello di prompt con title, abstract e introduction
+            user_prompt = self.USER_PROMPT.format(title=item['title'], abstract=item['abstract'], introduction=introduction)
+
+            #Prompt "grezzo" come coppia utente/sistema. Lo usa il judge per sapere a quale richiesta risponde il testo
+            self.raw_prompts.append((user_prompt, self.SYSTEM_PROMPT))
+            #Prompt vero e proprio
+            self.prompts.append(
+                self.tokenizer.apply_chat_template(
+                    [
+                        {"role": "system", "content": self.SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    #Restituisce una stringa (non token)
+                    tokenize=False,
+                    #Aggiunge in fondo l'inizio del turno dell'assistente
+                    add_generation_prompt=True,
+                    #Disattiva la modalità di ragionamento
+                    enable_thinking=False
+                )
+            )
+            #Conclusione scritta dagli autori del paper (testo umano)
+            self.natural_texts.append(item["conclusion"])
+            #Identificativo arXiv del paper
+            self.arxiv_ids.append(item["arxiv_id"])
 
 if __name__ == '__main__':
     d1 = C4Dataset('dataset/c4/processed_c4.json', max_samples=100)

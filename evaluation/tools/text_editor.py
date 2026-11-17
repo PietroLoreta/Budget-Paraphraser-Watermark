@@ -17,6 +17,8 @@
 # Description: Edit text using various techniques
 # ================================================
 
+from __future__ import annotations
+
 import copy
 import multiprocessing
 import random
@@ -48,10 +50,36 @@ system_prompt = (
     "any other extraneous information. Skip the preamble. Just rewrite the text directly."
 )
 
+#Istruzioni generali su chi deve essere il modello e cosa deve fare. Il budget sta nel messaggio di sistema
+#per non ricopiare la riga del budget nella risposta
+BUDGET_SYSTEM_PROMPT = (
+    "You are an expert copy-editor. Rewrite the text given by the user in your own voice, preserving all of "
+    "its information and roughly the same length. Change the text by the requested amount:\n"
+    "- lexical diversity {lex}/100: the percentage of words to replace (0 = keep the same words, "
+    "100 = replace all of them);\n"
+    "- order diversity {order}/100: how much to reorder the content (0 = keep the same order, "
+    "100 = completely reorder it).\n"
+    "Output only the rewritten text, without repeating these instructions. Do not include any information "
+    "that is not present in the original text. Do not respond with a greeting or any other extraneous "
+    "information. Skip the preamble. Just rewrite the text directly."
+)
+
+#Messaggio dell'utente che contiene solo il testo racchiuso tra due marcatori
+BUDGET_INSTRUCTION = "\n[[START OF TEXT]]\n{text}\n[[END OF TEXT]]"
+
+def build_budget_prompt(tokenizer, text: str, target_lex: int, target_order: int) -> str:
+    """Prompt completo per il Qwen non addestrato con il budget."""
+    return tokenizer.apply_chat_template(
+        [
+            {"role": "system", "content": BUDGET_SYSTEM_PROMPT.format(lex=target_lex, order=target_order)},
+            {"role": "user", "content": BUDGET_INSTRUCTION.format(text=text)}
+        ],
+        tokenize=False,
+        add_generation_prompt=True,
+    ) + "[[START OF PARAPHRASE]]\n"
 
 class TextEditor:
     """Base class for text editing."""
-
     def __init__(self) -> None:
         pass
 
@@ -60,7 +88,6 @@ class TextEditor:
 
     def edit_batch(self, texts: list, references=None):
         return [self.edit(text, reference) for text, reference in zip(texts, references)]
-
 
 class RandomWalkAttack(TextEditor):
     """
@@ -84,7 +111,6 @@ class RandomWalkAttack(TextEditor):
                                   do_sample=True, top_p=0.95, top_k=None, repetition_penalty=1.5)
         '''
     """
-
     def __init__(self, perturbation_tokenizer: T5Tokenizer, perturbation_oracle: T5ForConditionalGeneration,
                  quality_oracle: QualityOracle, device='cuda', total_steps=200, span_len=6, target_valid_steps=100,
                  **kwargs):
@@ -131,7 +157,6 @@ class RandomWalkAttack(TextEditor):
 
     def edit(self, text: str, prompt: str, backtrack_patience: int = 100, max_attempts: int = 1000):
         """Edit the text using the T5 model."""
-
         original_response, n_response = text, text
         n_iter, valid_steps = 0, 0
         patience = 0
@@ -220,10 +245,8 @@ class RandomWalkAttack(TextEditor):
 
         return corrected_text
 
-
 class GPTParaphraser(TextEditor):
     """Paraphrase a text using the GPT model."""
-
     def __init__(self, openai_model: str) -> None:
         """
             Initialize the GPT paraphraser.
@@ -242,7 +265,6 @@ class GPTParaphraser(TextEditor):
                                 system_content=system_prompt)
         paraphrased_text = openai_util.get_result(self.prompt.format(text))
         return paraphrased_text
-
 
 def edit_batch(prompts, model, tokenizer, gen_kwargs):
     final_inputs = tokenizer(prompts, return_tensors="pt", padding=True)
@@ -265,7 +287,6 @@ def edit_batch(prompts, model, tokenizer, gen_kwargs):
         ]
     return paraphrased_texts
 
-
 def get_prompts(texts, instruction, response, tokenizer):
     return [
         tokenizer.apply_chat_template(
@@ -278,13 +299,21 @@ def get_prompts(texts, instruction, response, tokenizer):
         ) + response
         for text in texts]
 
+#Prompt usato dal nostro modello addestrato sia nel training sia quando parafrasa nel test (llm paraphrase),
+#così training e test vedono lo stesso identico prompt
+DIAA_INSTRUCTION = "\n[[START OF TEXT]]\n{}\n[[END OF TEXT]]"
+DIAA_RESPONSE = "[[START OF PARAPHRASE]]\n"
+
+#Il prompt viene costruito con get_prompts, la funzione originale del repository
+def build_diaa_prompt(tokenizer, text: str) -> str:
+    return get_prompts([text], DIAA_INSTRUCTION, DIAA_RESPONSE, tokenizer)[0]
 
 def llm_server(model_config: ModelConfig, task_queue, result_queue, kwargs):
     loader = ModelLoader(model_config)
     adapter_ratio = kwargs.pop('adapter_ratio', 1.0)
     model, tokenizer = loader.load(adapter_ratio=adapter_ratio)
-    instruction = "\n[[START OF TEXT]]\n{}\n[[END OF TEXT]]"
-    response = "[[START OF PARAPHRASE]]\n"
+    instruction = DIAA_INSTRUCTION
+    response = DIAA_RESPONSE
     while True:
         try:
             task = task_queue.get()
@@ -297,10 +326,8 @@ def llm_server(model_config: ModelConfig, task_queue, result_queue, kwargs):
             print(e)
             break
 
-
 class LLMParaphraser(TextEditor):
     """Paraphrase a text using the LLM model."""
-
     def __init__(self, model_config, **kwargs):
         """
             Initialize the LLM paraphraser.
@@ -339,10 +366,30 @@ class LLMParaphraser(TextEditor):
         paraphrased_texts = self.result_queue.get()
         return paraphrased_texts
 
+class BudgetLLMParaphraser(TextEditor):
+    """Parafrasa con un LLM chiedendo un budget di diversità (lessicale, ordine)."""
+    def __init__(self, model, tokenizer, lex_diversity: int = None, order_diversity: int = None, **kwargs):
+        super().__init__()
+        self.model = model.eval()
+        self.tokenizer = tokenizer
+        self.lex_diversity = lex_diversity
+        self.order_diversity = order_diversity
+        self.gen_kwargs = dict(kwargs)
+
+    def edit(self, text: str, reference=None):
+        """Parafrasa un singolo testo."""
+        return self.edit_batch([text], [reference])[0]
+
+    def edit_batch(self, texts: list, references=None):
+        """Parafrasa un blocco di testi."""
+        if self.lex_diversity is None:
+            prompts = [build_diaa_prompt(self.tokenizer, text) for text in texts]
+        else:
+            prompts = [build_budget_prompt(self.tokenizer, text, self.lex_diversity, self.order_diversity) for text in texts]
+        return edit_batch(prompts, self.model, self.tokenizer, self.gen_kwargs)
 
 class DipperParaphraser(TextEditor):
     """Paraphrase a text using the DIPPER model."""
-
     def __init__(self, tokenizer: T5Tokenizer, model: T5ForConditionalGeneration, device='cuda',
                  lex_diversity: int = 60, order_diversity: int = 0, sent_interval: int = 1, **kwargs):
         """
@@ -377,7 +424,6 @@ class DipperParaphraser(TextEditor):
 
     def edit(self, text: str, reference: str):
         """Edit the text using the DIPPER model."""
-
         # Calculate the lexical and order diversity codes
         lex_code = int(100 - self.lex_diversity)
         order_code = int(100 - self.order_diversity)
@@ -386,8 +432,7 @@ class DipperParaphraser(TextEditor):
         text = " ".join(text.split())
         sentences = sent_tokenize(text)
 
-        # Preprocess the reference text
-        prefix = " ".join(reference.replace("\n", " ").split())
+        prefix = ""
 
         output_text = ""
 
@@ -403,7 +448,8 @@ class DipperParaphraser(TextEditor):
 
             # Tokenize the input
             final_input = self.tokenizer([final_input_text], return_tensors="pt")
-            final_input = {k: v.cuda() for k, v in final_input.items()}
+            #Sposta l'input sullo stesso dispositivo del modello. Con più GPU o sulla CPU darebbe errore
+            final_input = {k: v.to(self.device) for k, v in final_input.items()}
 
             # Generate the edited text
             with torch.inference_mode():
@@ -414,12 +460,11 @@ class DipperParaphraser(TextEditor):
             prefix += " " + outputs[0]
             output_text += " " + outputs[0]
 
-        return output_text
-
+        #Risultato senza spazi all'inizio e alla fine del testo
+        return output_text.strip()
 
 class WordDeletion(TextEditor):
     """Delete words randomly from the text."""
-
     def __init__(self, ratio: float) -> None:
         """
             Initialize the word deletion editor.
@@ -432,7 +477,6 @@ class WordDeletion(TextEditor):
 
     def edit(self, text: str, reference=None):
         """Delete words randomly from the text."""
-
         # Handle empty string input
         if not text:
             return text
@@ -449,7 +493,6 @@ class WordDeletion(TextEditor):
 
 class SynonymSubstitution(TextEditor):
     """Randomly replace words with synonyms from WordNet."""
-
     def __init__(self, ratio: float) -> None:
         """
             Initialize the synonym substitution editor.
@@ -498,10 +541,8 @@ class SynonymSubstitution(TextEditor):
 
         return replaced_text
 
-
 class ContextAwareSynonymSubstitution(TextEditor):
     """Randomly replace words with synonyms from WordNet based on the context."""
-
     def __init__(self, ratio: float, tokenizer: BertTokenizer, model: BertForMaskedLM, device='cuda') -> None:
         """
         Initialize the context-aware synonym substitution editor.
@@ -564,10 +605,8 @@ class ContextAwareSynonymSubstitution(TextEditor):
 
         return replaced_text
 
-
 class TruncatePromptTextEditor(TextEditor):
     """Truncate the prompt from the text."""
-
     def __init__(self) -> None:
         super().__init__()
 
@@ -579,10 +618,25 @@ class TruncatePromptTextEditor(TextEditor):
         else:
             return text
 
+#Cerca i punti in cui finisce una frase (punteggiatura con subito dopo uno spazio o la fine del testo)
+SENTENCE_END = re.compile(r'[.!?]["\')\]*_`]*(?=\s|$)')
+
+class TrimToLastSentenceTextEditor(TextEditor):
+    """Taglia il testo dopo l'ultima frase completa, eliminando la frase interrotta."""
+    def __init__(self) -> None:
+        super().__init__()
+
+    def edit(self, text: str, reference=None):
+        #Lista delle posizioni successive alla fine di ogni frase
+        ends = [m.end() for m in SENTENCE_END.finditer(text)]
+        if not ends:
+            return text
+        #Tiene tutto fino all'ultima fine di frase e butta via il pezzo interrotto
+        return text[:ends[-1]].rstrip()
+
 
 class TruncateTaskTextEditor(TextEditor):
     """Truncate the task description from the text, used in code generation."""
-
     def __init__(self) -> None:
         super().__init__()
 
@@ -594,10 +648,8 @@ class TruncateTaskTextEditor(TextEditor):
         else:
             return text
 
-
 class CodeGenerationTextEditor(TextEditor):
     """Process the code generation output, removing the extra parts."""
-
     def __init__(self) -> None:
         super().__init__()
 
@@ -607,10 +659,8 @@ class CodeGenerationTextEditor(TextEditor):
         text = text.split("\n\n")[0]
         return text
 
-
 class BackTranslationTextEditor(TextEditor):
     """Translate text from source language to intermediary language, then back to the source language."""
-
     def __init__(self,
                  translate_to_intermediary=Translator(from_lang="en", to_lang="zh").translate,
                  translate_to_source=Translator(from_lang="zh", to_lang="en").translate) -> None:

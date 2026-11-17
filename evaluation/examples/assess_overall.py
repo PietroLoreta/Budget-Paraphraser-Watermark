@@ -2,46 +2,63 @@ import json
 import os
 from typing import Dict, List
 
-from evaluation.dataset import MarkMyWordsDataset
+import gc
+import random
+import torch
+
+from evaluation.dataset import MarkMyWordsDataset, PaperConclusionDataset
 from evaluation.pipelines.robustness import WatermarkRobustnessPipeline, PipelineConfig
 from evaluation.tools.text_editor import TruncatePromptTextEditor, LLMParaphraser, \
-    GPTParaphraser, ContextAwareSynonymSubstitution
-from evaluation.tools.text_quality_analyzer import GPTTextRater
+    GPTParaphraser, ContextAwareSynonymSubstitution, DipperParaphraser
+from evaluation.tools.text_quality_analyzer import GPTTextRater, LLMTextRater
 from evaluation.utils import ModelLoader, ModelConfig, _load_tokenizer
 from utils.transformers_config import TransformersConfig
 
+from evaluation.tools.text_editor import BudgetLLMParaphraser, TrimToLastSentenceTextEditor
+from transformers import T5Tokenizer, T5ForConditionalGeneration, AutoConfig
+
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 NUM_PARAPHRASES = 8
-MAX_NEW_TOKENS = 256
-
+MAX_NEW_TOKENS = 512
+#Budget di diversità con cui viene interrogato DIPPER
+DIPPER_BUDGETS = [(20, 0), (40, 0), (60, 0), (40, 20), (60, 20), (60, 40)]  # (lexical, order)
+#Quante parafrasi DIPPER generare per ogni testo e per ogni budget
+DIPPER_REPEATS = 2
 
 class RobustnessPipelineFactory:
     """Factory for creating watermark robustness evaluation pipelines."""
-
     def __init__(self, devices: List[str]):
         self.devices = devices
 
     def create_pipeline(self,
                         dataset: MarkMyWordsDataset,
                         mode: str = 'end_to_end',
-                        filename: str = None
+                        filename: str = None,
+                        paraphraser: str = None,
+                        #La pipeline gira con un giudice Llama-3.1-8B
+                        no_judge: bool = False
                         ) -> 'WatermarkRobustnessPipeline':
         """Create a pipeline with standard configuration."""
         edit_sequences = {}
         if mode == 'gpt_judge':
-            rating_metrics = {
-                "gpt_judge": GPTTextRater(openai_model='gpt-4o-mini', cot=True)
-            }
+            rating_metrics = {"gpt_judge": GPTTextRater(openai_model='gpt-4o-mini', cot=True)}
             batch_size = 32
         elif mode == 're_evaluate':
             rating_metrics = RobustnessPipelineFactory._create_rating_metrics(self.devices[-3:])
-            batch_size = 128
+            #L'originale (128) è pensato per un server multi-GPU
+            batch_size = 16
         else:
-            rating_metrics = RobustnessPipelineFactory._create_rating_metrics(None)
+            #In DIPPER il giudice non viene caricato: DIPPER e Llama-8B insieme non entrano nella GPU condivisa.
+            #La qualità viene calcolata in un secondo passaggio quando DIPPER non è più in memoria
+            if mode in ['dipper_paraphrase', 'budget_paraphrase', 'llm_paraphrase'] or no_judge:
+                rating_metrics = {}
+            else:
+                rating_metrics = RobustnessPipelineFactory._create_rating_metrics(self.devices)
             batch_size = 16
             devices = self.devices
             if mode == 'generate_only':
-                edit_sequences = {'none': [TruncatePromptTextEditor()]}
+                #Toglie il prompt dall'output e taglia il testo all'ultima frase completa
+                edit_sequences = {'none': [TruncatePromptTextEditor(), TrimToLastSentenceTextEditor()]}
             elif mode == 'end_to_end':
                 devices = devices[1:]
                 edit_sequences = RobustnessPipelineFactory._create_edit_sequences(devices)
@@ -62,13 +79,21 @@ class RobustnessPipelineFactory:
                             model_name, devices[i * devices_per_model:(i + 1) * devices_per_model], lambda_weights
                         )
                     )
+            #Attacca con DIPPER i testi watermarkati già generati a tutti i budget di diversità
+            elif mode == 'dipper_paraphrase':
+                edit_sequences = RobustnessPipelineFactory._create_dipper_sequences(devices)
+            elif mode == 'budget_paraphrase':
+                edit_sequences = RobustnessPipelineFactory._create_budget_sequences(paraphraser, devices)
+            elif mode == 'llm_paraphrase':
+                edit_sequences = RobustnessPipelineFactory._create_llm_sequences(paraphraser, devices)
             else:
                 raise ValueError(f"Invalid mode {mode}.")
         config = PipelineConfig(dataset=dataset,
                                 edit_sequences=edit_sequences,
                                 rating_metrics=rating_metrics,
                                 filename=filename,
-                                batch_size=batch_size)
+                                batch_size=batch_size,
+                                max_batch_size=8)
         return WatermarkRobustnessPipeline(config)
 
     @staticmethod
@@ -80,9 +105,7 @@ class RobustnessPipelineFactory:
             # ("models/Unigram_new/meta-llama/Llama-3.2-3B-Instruct", devices[0]),
             ("meta-llama/Llama-3.2-3B-Instruct", devices[0]),
         ]
-        sequences = {
-            'Word-S(Context)': [ContextAwareSynonymSubstitution(ratio=0.5, **bert)],
-        }
+        sequences = {'Word-S(Context)': [ContextAwareSynonymSubstitution(ratio=0.5, **bert)],}
         for model, device in paraphraser_models:
             paraphraser = RobustnessPipelineFactory._create_paraphraser(model, device)
             # no prompt truncate, because "none" is already truncated
@@ -119,7 +142,6 @@ class RobustnessPipelineFactory:
 
         model_names = ["models/Unigram_new/Qwen/Qwen2.5-3B-Instruct", 'models/dpo_qwen_3_exponential']
         devices_per_model = len(devices) // len(model_names)
-        # lambda_weights = [0, 0.2, 0.4, 0.6, 0.8, 1]
         lambda_weights = [0, 0.2, 0.4, 0.6, 0.8, 1]
         for i, model_name in enumerate(model_names):
             sequences.update(
@@ -137,13 +159,81 @@ class RobustnessPipelineFactory:
             ("Qwen/Qwen2.5-3B-Instruct", devices[0]),
             ('meta-llama/Llama-3.2-3B-Instruct', devices[0]),
         ]
-        sequences = {
-        }
+        sequences = {}
         for model, device in paraphraser_models:
-            paraphraser = RobustnessPipelineFactory._create_paraphraser(model, device,
-                                                                        num_return_sequences=NUM_PARAPHRASES)
+            paraphraser = RobustnessPipelineFactory._create_paraphraser(model, device, num_return_sequences=NUM_PARAPHRASES)
             sequences[f'Paraphrase({model})'] = [paraphraser]
         return sequences
+
+    @staticmethod
+    def _create_dipper_sequences(devices: List[str]) -> Dict:
+        """Crea sequenze di parafrasi DIPPER su una griglia di budget di diversità (lexical, order)."""
+        device = devices[0]
+        #DIPPER viene caricato una sola volta in bfloat16 e condiviso da tutte le sequenze
+        tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-xxl')
+        model = T5ForConditionalGeneration.from_pretrained(
+            'kalpeshk2011/dipper-paraphraser-xxl', torch_dtype=torch.bfloat16
+        ).to(device)
+
+        #Dizionario delle sequenze di modifica che la pipeline applicherà a ogni testo watermarkato
+        sequences = {}
+        for lex, order in DIPPER_BUDGETS:
+            #Ciclo per il numero di parafrasi previste per ogni budget
+            for rep in range(DIPPER_REPEATS):
+                #Nome della sequenza
+                sequences[f'Dipper_L{lex}_O{order}_r{rep}'] = [
+                    DipperParaphraser(
+                        tokenizer=tokenizer,
+                        model=model,
+                        device=device,
+                        #Quanto cambiare le parole (0-100)
+                        lex_diversity=lex,
+                        #Quanto riordinare il contenuto (0-100)
+                        order_diversity=order,
+                        #Parafrasa a blocchi di 3 frasi
+                        sent_interval=3,
+                        #Limite di token generati per blocco
+                        max_new_tokens=256,
+                        #Campionamento della scelta del token più probabile
+                        do_sample=True,
+                        #Si campiona solo tra i token più probabili che insieme coprono il 75% della probabilità
+                        top_p=0.75,
+                        #Il filtro sui token è dato solo da top_p
+                        top_k=None
+                    )
+                ]
+        return sequences
+
+    @staticmethod
+    def _create_budget_sequences(model_name: str, devices: List[str]) -> Dict:
+        """Crea una sequenza per ogni budget di DIPPER_BUDGETS, tutte con lo stesso parafrasatore."""
+        device = devices[0]
+        #Il modello viene caricato una volta e condiviso da tutte le sequenze
+        loaded = ModelLoader.from_name(model_name, device=device)
+
+        sequences = {}
+        for lex, order in DIPPER_BUDGETS:
+            sequences[f'Budget_L{lex}_O{order}'] = [
+                BudgetLLMParaphraser(
+                    model=loaded['model'],
+                    tokenizer=loaded['tokenizer'],
+                    lex_diversity=lex,
+                    order_diversity=order,
+                    max_new_tokens=MAX_NEW_TOKENS,
+                    do_sample=True,
+                    temperature=1.0
+                )
+            ]
+        return sequences
+
+    @staticmethod
+    def _create_llm_sequences(model_name: str, devices: List[str]) -> Dict:
+        """Una sola sequenza, senza budget nel prompt."""
+        loaded = ModelLoader.from_name(model_name, device=devices[0])
+        return {
+            'LLM': [BudgetLLMParaphraser(model=loaded['model'], tokenizer=loaded['tokenizer'],
+                                         max_new_tokens=MAX_NEW_TOKENS, do_sample=True, temperature=1.0)]
+        }
 
     @staticmethod
     def _create_paraphraser(model_name: str, device: str, **kwargs) -> LLMParaphraser:
@@ -199,34 +289,29 @@ class RobustnessPipelineFactory:
 
     @staticmethod
     def _create_rating_metrics(devices: List[str]) -> Dict:
-        """Create standard set of rating metrics."""
-        # rating_models = [ModelLoader.from_name('meta-llama/Llama-3.1-8B-Instruct', device=device) for device in devices]
+        """Crea il giudice di qualità usato per valutare testi e parafrasi."""
+        #Il giudice va sull'ultima GPU della lista
+        judge_device = devices[-1]
+        #Carica modello e tokenizer di LLama-3.1-8B-Instruct
+        judge = ModelLoader.from_name('meta-llama/Llama-3.1-8B-Instruct', device=judge_device)
 
         return {
-            # "llm_judge": LLMTextRater(
-            #     **rating_models[0],
-            #     device=devices[0],
-            #     cot=False,
-            #     max_new_tokens=MAX_NEW_TOKENS,
-            #     do_sample=False,
-            #     top_p=None,
-            #     temperature=None
-            # ),
-            # "ppl": PPLCalculator(**rating_models[1], device=devices[1]),
-            # "llm_cot": LLMTextRater(
-            #     **rating_models[2],
-            #     device=devices[2],
-            #     cot=True,
-            #     max_new_tokens=1024,
-            #     do_sample=False,
-            #     top_p=None,
-            #     temperature=None
-            # ),
-            "gpt_judge": GPTTextRater(openai_model='gpt-4o-mini', cot=True)
+            "llm_judge": LLMTextRater(
+                #Spacchetta il dizionario in diverse sezioni
+                **judge,
+                device=judge_device,
+                #Niente chain-of-thought: il giudice risponde senza scrivere prima un'analisi
+                cot=False,
+                #Di conseguenza bastano pochi token
+                max_new_tokens=32,
+                #Sceglie sempre il token più probabile
+                do_sample=False,
+                #Llama ha dei valori di default che farebbero stampare un avviso a ogni chiamata
+                top_p=None,
+                temperature=None
+            )
         }
 
-
-# main.py
 def main():
     import argparse
     from torch.cuda import device_count
@@ -238,16 +323,22 @@ def main():
         type=str,
         default='end_to_end',
         choices=['end_to_end', 'generate_only', 'add_edits', 'base_paraphrase', 'gpt_judge', 'ensemble_paraphrase',
-                 're_evaluate']
+                 're_evaluate', 'dipper_paraphrase', 'budget_paraphrase', 'llm_paraphrase']
     )
-    parser.add_argument(
-        '--dataset',
-        type=str,
-        default='eval',
-        choices=['eval', 'train']
-    )
+    parser.add_argument('--corpus', type=str, default='paper_conclusion', choices=['paper_conclusion', 'markmywords'])
+    parser.add_argument('--dataset', type=str, default='eval', choices=['eval', 'train'])
+    #Suffisso del file da leggere in modalità 're_evaluate'
+    parser.add_argument('--input_suff', type=str, default='_new')
+    #Modello che genera i testi watermarkati
+    parser.add_argument('--provider', type=str, default='Qwen/Qwen3.5-0.8B')
     parser.add_argument('--suff', type=str, required=False, default="_finaleval")
     parser.add_argument('--samples', type=int, default=296)
+    #Cartella del parafrasatore addestrato
+    parser.add_argument('--paraphraser', type=str, default=None)
+    #File JSON con la lista degli id da usare. Se non indicato si usano tutti i testi
+    parser.add_argument('--ids_file', type=str, default=None)
+    #Se presente, la pipeline gira senza giudice e i voti si calcolano dopo
+    parser.add_argument('--no_judge', action='store_true')
     parser.add_argument(
         '--hash_keys',
         type=int,  # Specifies that each input should be converted to an integer
@@ -255,42 +346,70 @@ def main():
         help="A list of hash_keys to use for watermarking",
         default=[15485863]
     )
-    directory = "evaluation/results"
     args = parser.parse_args()
+    directory = f"evaluation/results/{args.provider.replace('/', '_')}"
 
     # Setup devices
     devices = [f'cuda:{i}' for i in range(device_count())]
     pipeline_factory = RobustnessPipelineFactory(devices)
     # Initialize model and dataset
     provider_config = ModelConfig(
-        model_name='meta-llama/Llama-3.1-8B-Instruct',
+        model_name=args.provider,
         device=devices[0]
     )
+    if args.corpus == 'markmywords':
+        provider_config.max_new_tokens = 200
+
     if args.mode in ['generate_only', 'end_to_end']:
         provider_model, provider_tokenizer = ModelLoader(provider_config).load()
     else:
         provider_model, provider_tokenizer = None, _load_tokenizer(provider_config.model_name)
-    dataset = MarkMyWordsDataset(provider_tokenizer, max_samples=args.samples, dataset=args.dataset)
+    #Costruisce il dataset dei prompt di generazione
+    if args.corpus == 'markmywords':
+        dataset = MarkMyWordsDataset(provider_tokenizer, max_samples=args.samples, dataset=args.dataset)
+    else:
+        dataset = PaperConclusionDataset(provider_tokenizer,
+            data_source='dataset/paper_conclusion/arxiv_enhanced.arrow',
+            max_samples=args.samples)
     watermark_config_file = f'config/{args.algorithm}.json'
     with open(watermark_config_file, 'r') as f:
         config = json.load(f)
+    #Chiave riservata al test
+    TEST_KEY = 15485863
     hash_keys = args.hash_keys
-    if "hash_key" not in config:
+    if "hash_key" not in config and "keys" not in config:
         hash_keys = [None]  # Just use the default hash key for unsupported algorithms
+    #Un run completo della pipeline per ogni chiave
     for hash_key in hash_keys:
-        # change the hash key in the config file
+        #File di configurazione da passare al watermark
+        config_file = watermark_config_file
+        #KGW e Unigram: la chiave è un singolo numero
         if "hash_key" in config:
             config['hash_key'] = hash_key
-        with open(watermark_config_file, 'w') as f:
-            json.dump(config, f)
+            with open(watermark_config_file, 'w') as f:
+                json.dump(config, f)
+        #SynthID: la chiave è una lista di 30 numeri. Se ne genera una nuova
+        elif "keys" in config and hash_key != TEST_KEY:
+            #Copia la configurazione per non modificare quella originale
+            key_config = dict(config)
+            #Generatore casuale con seme hash_key che estrae 30 numeri diversi tra 0 e 999
+            key_config['keys'] = random.Random(hash_key).sample(range(1000), len(config['keys']))
+            #Salva la configurazione in un file separato
+            config_file = f'config/{args.algorithm}_key{hash_key}.json'
+            with open(config_file, 'w') as f:
+                json.dump(key_config, f)
+
+        #Dimensione del vocabolario del provider
+        provider_cfg = AutoConfig.from_pretrained(args.provider)
+        vocab_size = getattr(provider_cfg, 'text_config', provider_cfg).vocab_size
 
         watermark_args = {
             'algorithm_name': args.algorithm,
-            'algorithm_config': watermark_config_file,
+            'algorithm_config': config_file,
             'transformers_config': TransformersConfig(
                 model=provider_model,
                 tokenizer=provider_tokenizer,
-                vocab_size=len(provider_tokenizer),
+                vocab_size=vocab_size,
                 device=provider_config.device,
                 max_new_tokens=provider_config.max_new_tokens,
                 do_sample=provider_config.do_sample
@@ -304,17 +423,23 @@ def main():
         pipeline = pipeline_factory.create_pipeline(
             dataset=dataset,
             mode=args.mode,
-            filename=f'{directory}/{args.algorithm}{suff}{hash_key}.tsv'
+            filename=f'{directory}/{args.algorithm}{suff}{hash_key}.tsv',
+            paraphraser=args.paraphraser,
+            no_judge=args.no_judge
         )
         if args.mode in ['generate_only', 'end_to_end']:
             pipeline.evaluate(watermark_args)
         elif args.mode in ['gpt_judge', 're_evaluate']:
-            pipeline.add_quality(f'{directory}/{args.algorithm}_new{hash_key}.tsv')
+            pipeline.add_quality(f'{directory}/{args.algorithm}{args.input_suff}{hash_key}.tsv')
         else:
             if args.mode == 'base_paraphrase':
                 pipeline.edit_expansion = len(pipeline.config.edit_sequences) * NUM_PARAPHRASES
-            pipeline.add_edits(f'{directory}/{args.algorithm}_finaleval{hash_key}.tsv', watermark_args)
+            only_ids = set(json.load(open(args.ids_file))) if args.ids_file else None
+            pipeline.add_edits(f'{directory}/{args.algorithm}_finaleval{hash_key}.tsv', watermark_args, only_ids=only_ids)
 
+        del pipeline
+        gc.collect()
+        torch.cuda.empty_cache()
 
 if __name__ == '__main__':
     main()

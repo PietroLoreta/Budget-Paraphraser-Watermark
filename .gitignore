@@ -175,3 +175,27 @@ cython_debug/
 .vscode
 .DS_Store
 watermark/XSIR/embedding/train_embeddings_10K.txt
+
+# --- Esclusi da questo progetto: dati, modelli, risultati e log (troppo grandi) ---
+data/
+data_old_paperconclusion/
+models/
+evaluation/results/
+logs/
+outputs/
+hf_cache/
+old/
+*.safetensors
+*.arrow
+
+# Dati, modelli, risultati e log (troppo grandi per GitHub)
+data/
+data_old_paperconclusion/
+models/
+evaluation/results/
+logs/
+outputs/
+hf_cache/
+old/
+*.safetensors
+*.arrow

@@ -18,7 +18,6 @@ from evaluation.tools.text_editor import TextEditor
 from evaluation.tools.text_quality_analyzer import TextQualityAnalyzer
 from watermark.auto_watermark import AutoWatermark
 
-
 @dataclass
 class PipelineConfig:
     dataset: 'BaseDataset'
@@ -28,7 +27,6 @@ class PipelineConfig:
     batch_size: int = 4
     filename: str = "results.tsv"
     max_batch_size: int = 128
-
 
 def wait_for_all(stages, result_queue):
     while True:
@@ -42,7 +40,6 @@ def wait_for_all(stages, result_queue):
     for stage in stages:
         stage.join()
 
-
 def _feed_data(data: List[Any], queue: Queue, end=True) -> None:
     """Helper method to feed data into a queue."""
     for item in data:
@@ -50,7 +47,6 @@ def _feed_data(data: List[Any], queue: Queue, end=True) -> None:
     if end:
         queue.put(None)  # Signal end of input
     logging.debug(f"Fed {len(data)} items into {queue}")
-
 
 def _initialize_stages(
         stages_info: List[Dict[str, Any]],
@@ -64,7 +60,6 @@ def _initialize_stages(
         logging.debug(f"Started stage: {info['stage_class'].__name__}")
     return stages
 
-
 class WatermarkRobustnessPipeline:
     """Pipeline for comprehensive watermark robustness evaluation"""
     def __init__(self, config: PipelineConfig):
@@ -76,10 +71,13 @@ class WatermarkRobustnessPipeline:
         logging.debug(f"Initialized pipeline with total_items={self.total_items}, "
                       f"total_generated={self.total_generated}, total_edited={self.total_edited}")
 
-    def add_edits(self, filename: str, watermark_args: Dict[str, Any]) -> None:
+    def add_edits(self, filename: str, watermark_args: Dict[str, Any], only_ids=None) -> None:
         """Add edits to responses and process through the pipeline."""
         loader = ResponseLoader(filename)
         responses = loader.load_all()
+        #Vengono potenzialmente parafrasati solo i testi con gli id indicati
+        if only_ids is not None:
+            responses = [r for r in responses if r.id in only_ids]
         watermarked_responses = [
             r for r in responses if r.is_watermarked and r.edit_sequence == ['none']
         ]

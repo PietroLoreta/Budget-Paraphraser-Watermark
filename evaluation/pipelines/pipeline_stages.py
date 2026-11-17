@@ -20,7 +20,6 @@ from evaluation.tools.text_quality_analyzer import TextQualityAnalyzer, LLMTextR
     DirectTextQualityAnalyzer, GPTTextRater
 from watermark.base import BaseWatermark
 
-
 @dataclass(frozen=True)
 class Response:
     """Class to hold response data and evaluation metrics"""
@@ -33,10 +32,8 @@ class Response:
     watermark_score: Optional[float] = None
     ratings: Dict[str, float] = field(default_factory=dict)
 
-
 class PipelineStage(Thread):
     """Base class for pipeline stages"""
-
     def __init__(self, input_queue: Queue, output_queue: Queue,
                  batch_size: int, total_items: int, stage_name: str,
                  show_progress: bool = True):
@@ -91,10 +88,8 @@ class PipelineStage(Thread):
         finally:
             self.progress.close()
 
-
 class GenerationStage(PipelineStage):
     """Stage for generating watermarked and unwatermarked text"""
-
     def __init__(self, input_queue: Queue, output_queue: Queue,
                  batch_size: int, total_items: int, watermark: BaseWatermark,
                  dataset: BaseDataset, show_progress: bool = True):
@@ -117,10 +112,8 @@ class GenerationStage(PipelineStage):
         ])
         return responses
 
-
 class EditingStage(PipelineStage):
     """Stage for applying edit sequences to texts in parallel using threads"""
-
     def __init__(self, input_queue: Queue, output_queue: Queue,
                  batch_size: int, total_items: int,
                  edit_sequences: Dict[str, List[TextEditor]],
@@ -129,7 +122,7 @@ class EditingStage(PipelineStage):
         super().__init__(input_queue, output_queue, batch_size, total_items,
                          "Editing", show_progress)
         self.edit_sequences = edit_sequences
-        self.non_watermarked_edit_sequence = [TruncatePromptTextEditor()]
+        self.non_watermarked_edit_sequence = edit_sequences.get('none', [TruncatePromptTextEditor()])
         # Count number of paraphrase sequences for default max_workers
         paraphrase_count = sum(1 for name in edit_sequences.keys() if 'Paraphrase' in name)
         self.max_workers = max_workers or paraphrase_count
@@ -240,10 +233,8 @@ class EditingStage(PipelineStage):
                 editor.join()
         super().join(timeout)
 
-
 class DetectionStage(PipelineStage):
     """Stage for detecting watermarks in texts"""
-
     def __init__(self, input_queue: Queue, output_queue: Queue,
                  batch_size: int, total_items: int, watermark: BaseWatermark,
                  show_progress: bool = True):
@@ -254,13 +245,15 @@ class DetectionStage(PipelineStage):
     def process_batch(self, batch: List[Response]) -> List[Response]:
         detected_responses = []
         for response in batch:
-            result = self.watermark.detect_watermark(response.text, return_dict=True)
-            detected_response = replace(response,
-                                        watermark_detected=result['is_watermarked'],
-                                        watermark_score=result['score'])
-            detected_responses.append(detected_response)
+            try:
+                result = self.watermark.detect_watermark(response.text, return_dict=True)
+                detected, score = result['is_watermarked'], result['score']
+            except Exception as e:
+                #Un testo che il detector non riesce ad analizzare viene registrato come non rilevato
+                logging.warning(f"Detection failed for id: {response.id} {response.edit_sequence}: {e}")
+                detected, score = False, None
+            detected_responses.append(replace(response, watermark_detected=detected, watermark_score=score))
         return detected_responses
-
 
 def process_metric(metric_name, analyzer, dataset, batch, use_dataset_prompts):
     if isinstance(analyzer, (LLMTextRater, GPTTextRater)):
@@ -288,10 +281,8 @@ def process_metric(metric_name, analyzer, dataset, batch, use_dataset_prompts):
 
     return metric_name, scores
 
-
 class RatingStage(PipelineStage):
     """Stage for computing quality ratings"""
-
     def __init__(self, input_queue: Queue, output_queue: Queue,
                  batch_size: int, total_items: int,
                  rating_metrics: Dict[str, TextQualityAnalyzer], dataset: BaseDataset,
@@ -343,12 +334,13 @@ class RatingStage(PipelineStage):
         return rated_responses
 
     def process_batch(self, batch: List[Response]) -> List[Response]:
+        #Nessun giudice: i testi passano senza valutazione
+        if not self.rating_metrics:
+            return batch
         return self.compute_ratings(batch)
-
 
 class SavingStage(PipelineStage):
     """Stage for saving responses to a CSV file."""
-
     def __init__(self, input_queue: Queue, output_queue: Queue,
                  batch_size: int, total_items: int, filename: str,
                  show_progress: bool = True):
@@ -414,10 +406,8 @@ class SavingStage(PipelineStage):
             "ratings": response.ratings
         }
 
-
 class ResponseLoader:
     """Loader for response data saved in TSV format."""
-
     def __init__(self, filename: str):
         """
         Initialize the ResponseLoader.
@@ -528,7 +518,6 @@ class ResponseLoader:
                 batch = []
         if batch:  # Yield any remaining responses
             yield batch
-
 
 if __name__ == "__main__":
     # Example usage of the ResponseLoader

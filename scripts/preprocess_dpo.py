@@ -2,6 +2,11 @@ import random
 from collections import defaultdict
 from typing import List
 
+import os
+import re
+import argparse
+import json
+
 import pandas as pd
 from datasets import Dataset
 from tqdm import tqdm
@@ -9,83 +14,190 @@ from transformers import AutoTokenizer
 
 from evaluation.pipelines.pipeline_stages import ResponseLoader
 
-system_prompt = (
-    "You are an expert copy-editor. Please rewrite the following text in your own voice and paraphrase all sentences.\n"
-    "Ensure that the final output contains the same information as the original text and has roughly the same length.\n"
-    "Do not leave out any important details when rewriting in your own voice. Do not include any information that is not"
-    "present in the original text. Do not respond with a greeting or any other extraneous information. "
-    "Skip the preamble. Just rewrite the text directly."
-)
-instruction = "\n[[START OF TEXT]]\n{}\n[[END OF TEXT]]"
-response = "[[START OF PARAPHRASE]]\n"
+from evaluation.tools.diversity_metrics import lexical_diversity, order_diversity
+from evaluation.tools.text_editor import build_budget_prompt, build_diaa_prompt
 
+random.seed(42)
 
-def create_dpo_dataset(input_files: List[str], output_dir: str, model: str) -> Dataset:
+#Espressione che riconosce i nomi delle sequenze DIPPER
+BUDGET_PATTERN = re.compile(r"Dipper_L(\d+)_O(\d+)_r\d+")
 
+def parse_budget(edit_sequence: List[str]):
+    """Restituisce il budget richiesto a DIPPER per questa riga."""
+    match = BUDGET_PATTERN.search(str(edit_sequence))
+    if match is None:
+        return None
+    return int (match.group(1)), int(match.group(2))
+
+DIPPER_BUDGETS = [(20, 0), (40, 0), (60, 0), (40, 20), (60, 20), (60, 40)]  # (lexical, order)
+
+#Pesi del punteggio di default: si usano quando non si specificano i pesi
+ALPHA = 1.0
+LAMBDA_L = 1.0
+LAMBDA_O = 1.0
+#Differenza minima di punteggio tra la parafrasi scelta e quella scartata
+MIN_MARGIN = 0.1
+
+#Insieme di validazione per la ricerca dei pesi
+N_TRAIN_SETS = 400
+VAL_SIZE = 40
+VAL_SEED = 0
+VAL_IDS = set(random.Random(VAL_SEED).sample(range(N_TRAIN_SETS), VAL_SIZE))
+
+#Modello che ha generato i testi watermarked
+PROVIDER = "Qwen/Qwen3.5-0.8B"
+#Filtro di lunghezza
+MIN_TOKENS, MAX_TOKENS = 128, 233 #10° e 90° percentile dei testi di Paper Conclusion
+#Numero di coppie per testo
+N_REJECTED = 3
+
+def describe_candidate(original_text: str, paraphrase):
+    """Descrive ogni parafrasi candidata."""
+    lex = lexical_diversity(original_text, paraphrase.text)
+    order = order_diversity(original_text, paraphrase.text)
+    quality = paraphrase.ratings.get("llm_judge")
+    if lex is None or order is None or quality is None:
+        return None
+    return {
+        "response": paraphrase,
+        "evaded": 0 if paraphrase.watermark_detected else 1,
+        "quality": quality,
+        "lex": lex,
+        "order": order
+    }
+
+def score(c, target_lex, target_order, alpha=ALPHA, lambda_l=LAMBDA_L, lambda_o=LAMBDA_O):
+    """Dà un voto a ogni parafrasi candidata."""
+    return (c["evaded"] + alpha * c["quality"]
+            - lambda_l * abs(c["lex"] - target_lex) / 100
+            - lambda_o * abs(c["order"] - target_order) / 100)
+
+def select_pairs(candidates, target_lex, target_order, n_rejected=N_REJECTED, min_margin=MIN_MARGIN, **weights):
+    """Sceglie fino a n coppie (chosen/rejected) per un testo e un budget target."""
+    #Servono almeno due candidate per formare una coppia
+    if len(candidates) < 2:
+        return []
+    #Ordina le candidate dal punteggio più alto al più basso
+    ranked = sorted(candidates, key=lambda c: score(c, target_lex, target_order, **weights), reverse=True)
+    best = ranked[0]
+    #Se nemmeno la migliore rompe il watermark si scarta
+    if not best["evaded"]:
+        return []
+    best_score = score(best, target_lex, target_order, **weights)
+    pairs = []
+    #Parte dalla peggiore risalendo la classifica
+    for worst in reversed(ranked[1:]):
+        if len(pairs) == n_rejected:
+            break
+        if best_score - score(worst, target_lex, target_order, **weights) < min_margin:
+            break
+        pairs.append((best, worst))
+    return pairs
+
+def create_dpo_dataset(input_files: List[str], output_dir: str, model: str, target_lex: int, target_order: int,
+                       prompt_style: str = "diaa", n_rejected: int = N_REJECTED,
+                       min_margin: float = MIN_MARGIN, **weights) -> Dataset:
+    """Dataset di preferenze per un budget target, con le coppie di tutti i file indicati."""
     tokenizer = AutoTokenizer.from_pretrained(model)
-    dpo_data = []
-    rate_thresh = 0.8
+    provider_tokenizer = AutoTokenizer.from_pretrained(PROVIDER)
+    #Memorizza anche le informazioni delle coppie
+    dpo_data, pairs_info = [], []
+    #Misura quanti testi vengono scartati
+    skipped = defaultdict(int)
+
     for input_file in input_files:
-        loader = ResponseLoader(input_file)
-        generations = loader.load_all()
-
-        watermarked_generations = [g for g in generations if g.is_watermarked]
-        # unwatermarked_generations = [g for g in generations if not g.is_watermarked]
-        # calculator = DynamicThresholdSuccessRateCalculator(labels=['TPR', 'F1'], rule='target_fpr', target_fpr=0.05)
-        # watermarked_unattacked_scores = [g.watermark_score for g in watermarked_generations if
-        #                                  "none" in str(g.edit_sequence)]
-        # unwatermarked_scores = [g.watermark_score for g in unwatermarked_generations]
-        # wm_thresh = calculator.find_threshold(watermarked_unattacked_scores, unwatermarked_scores)
+        watermark = os.path.basename(input_file).split("_")[0]
         watermark_group = defaultdict(list)
-        for gen in watermarked_generations:
-            watermark_group[gen.id].append(gen)
+        for gen in ResponseLoader(input_file).load_all():
+            if gen.is_watermarked:
+                watermark_group[gen.id].append(gen)
 
-        for _id in tqdm(watermark_group):
+        # Un giro per ogni testo del file. watermark_group raggruppa le righe per id
+        for _id in tqdm(watermark_group, desc=f"{input_file} L{target_lex}_0{target_order}"):
+            if _id in VAL_IDS:
+                skipped['validazione'] += 1
+                continue
             id_group = watermark_group[_id]
-            edit_strs = [str(g.edit_sequence) for g in id_group]
-            no_attack = [g for g, edit in zip(id_group, edit_strs) if "none" in edit]
-            paraphrases = [g for g, edit in zip(id_group, edit_strs) if model in edit]
-            if not no_attack or not paraphrases:
+            # Il testo originale, cioè la riga non attaccata
+            no_attack = [g for g in id_group if g.edit_sequence == ['none']]
+            # Si salta il testo se l'originale manca oppure se il watermark non viene rilevato in partenza
+            if not no_attack or not no_attack[0].watermark_detected:
+                skipped['original not detected'] += 1
+                continue
+            original_text = no_attack[0].text
+            n_tokens = len(provider_tokenizer(original_text, add_special_tokens=False)["input_ids"])
+            if not MIN_TOKENS <= n_tokens <= MAX_TOKENS:
+                skipped['not in range length'] += 1
                 continue
 
-            if not any(no_attack[i].watermark_detected for i in range(len(no_attack))):
+            #Tutte le parafrasi DIPPER del testo con le loro descrizioni
+            candidates = [describe_candidate(original_text, g) for g in id_group if parse_budget(g.edit_sequence)]
+            #Scarta le parafrasi per cui una misura non è disponibile
+            candidates = [c for c in candidates if c is not None]
+            pairs = select_pairs(candidates, target_lex, target_order, n_rejected, min_margin, **weights)
+            if not pairs:
+                skipped['no valid couple'] += 1
                 continue
-            # no_attack_rating = no_attack[0].ratings["llm_judge"]
-            # rate_thresh = min(0.8, no_attack_rating)
-            chosen_paraphrases = [g for g in paraphrases if g.ratings["llm_judge"] > rate_thresh and not g.watermark_detected]
-            rejected_paraphrases = [g for g in paraphrases if g.ratings["llm_judge"] < rate_thresh or g.watermark_detected]
-            if len(chosen_paraphrases) == 0:
-                continue
-            if len(rejected_paraphrases) == 0:
-                rejected_paraphrases = no_attack
 
-            prompt = tokenizer.apply_chat_template(
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": instruction.format(no_attack[0].text)}
-                ],
-                tokenize=False,
-                add_generation_prompt=True
-            ) + response
-            for i, p in enumerate(chosen_paraphrases):
-                dpo_data.append({
-                    'prompt': prompt,
-                    'chosen': p.text,
-                    'rejected': random.choice(rejected_paraphrases).text,
+            prompt = (build_budget_prompt(tokenizer, original_text, target_lex, target_order)
+                      if prompt_style == "budget" else build_diaa_prompt(tokenizer, original_text))
+            for chosen, rejected in pairs:
+                # Esempio di addestramento DPO
+                dpo_data.append({'prompt': prompt,
+                                 'chosen': chosen['response'].text,
+                                 'rejected': rejected['response'].text})
+                #Informazioni sulla coppia salvate a parte
+                pairs_info.append({
+                    'file': input_file, 'id': _id, 'watermark': watermark, 'n_tokens': n_tokens,
+                    'target_lex': target_lex, 'target_order': target_order,
+                    'chosen_seq': chosen['response'].edit_sequence[0],
+                    'chosen_lex': chosen['lex'], 'chosen_order': chosen['order'],
+                    'chosen_quality': chosen['quality'], 'chosen_evaded': chosen['evaded'],
+                    'rejected_seq': rejected['response'].edit_sequence[0],
+                    'rejected_lex': rejected['lex'], 'rejected_order': rejected['order'],
+                    'rejected_quality': rejected['quality'], 'rejected_evaded': rejected['evaded']
                 })
+
     dataset = Dataset.from_pandas(pd.DataFrame(dpo_data))
     dataset.save_to_disk(output_dir)
-    print(f"Created DPO dataset with {len(dpo_data)} samples")
+    #Salva le informazioni su tutte le coppie in un file CSV accanto al dataset
+    pd.DataFrame(pairs_info).to_csv(f"{output_dir}_pairs_info.csv", index=False)
+    print(f"L{target_lex}_0{target_order}: {len(dpo_data)} couples in {output_dir} | skipped texts: {dict(skipped)}")
     return dataset
 
 
 if __name__ == "__main__":
-    watermark = "Unigram"
-    keys = list(range(10, 330, 10))
-    input_files = [
-        f"evaluation/results/{watermark}_edit{key}.tsv" for key in keys
-    ]
-    model = 'meta-llama/Llama-3.2-3B-Instruct'
-    # model = "Qwen/Qwen2.5-3B-Instruct"
-    output_dir = f"data/{watermark}_new/{model}"
-    create_dpo_dataset(input_files, output_dir, model)
+    parser = argparse.ArgumentParser()
+    #Watermark da includere: di default tutti e tre così il dataset è non adaptive
+    parser.add_argument('--watermarks', nargs='+', default=['KGW', 'Unigram', 'SynthID'])
+    #Chiavi di training da includere (la chiave di test qui non va mai usata)
+    parser.add_argument('--keys', nargs='+', type=int, default=[10, 20, 30])
+    #Cartella con i file delle parafrasi DIPPER valutate dal giudice
+    parser.add_argument('--results_dir', default='evaluation/results/Qwen_Qwen3.5-0.8B')
+    #Budget per cui costruire i dataset (di default vengono usati tutti e sei)
+    parser.add_argument('--budgets', nargs='+', default=None)
+    #Prompt salvato nelle coppie: 'diaa' (usato dal modello addestrato) o 'budget'
+    parser.add_argument('--prompt_style', choices=['diaa', 'budget'], default='diaa')
+    #Pesi del punteggio
+    parser.add_argument('--alpha', type=float, default=ALPHA)
+    parser.add_argument('--lambda_l', type=float, default=LAMBDA_L)
+    parser.add_argument('--lambda_o', type=float, default=LAMBDA_O)
+    #Numero di parafrasi "rejected" per testo
+    parser.add_argument('--n_rejected', type=int, default=N_REJECTED)
+    #Suffisso del nome della cartella di output
+    parser.add_argument('--tag', type=str, default='')
+    args = parser.parse_args()
+
+    with open("data/val_ids.json", "w") as f:
+        json.dump(sorted(VAL_IDS), f)
+
+    input_files = [f"{args.results_dir}/{wm}_dipper_rated{key}.tsv" for wm in args.watermarks for key in args.keys]
+    budgets = (DIPPER_BUDGETS if args.budgets is None
+               else [tuple(int(x) for x in re.findall(r'\d+', b)) for b in args.budgets])
+    model = "Qwen/Qwen2.5-3B-Instruct"
+
+    for target_lex, target_order in budgets:
+        output_dir = f"data/mix_dipper{args.tag}/L{target_lex}_O{target_order}/{model}"
+        create_dpo_dataset(input_files, output_dir, model, target_lex, target_order,
+                           prompt_style=args.prompt_style, n_rejected=args.n_rejected,
+                           alpha=args.alpha, lambda_l=args.lambda_l, lambda_o=args.lambda_o)
