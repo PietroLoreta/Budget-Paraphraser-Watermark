@@ -19,15 +19,12 @@ from evaluation.tools.text_editor import build_budget_prompt, build_diaa_prompt
 
 random.seed(42)
 
-#Espressione che riconosce i nomi delle sequenze DIPPER
-BUDGET_PATTERN = re.compile(r"Dipper_L(\d+)_O(\d+)_r\d+")
+#Nomi delle sequenze candidate
+CANDIDATE_PATTERN = re.compile(r"(Dipper_L\d+_O\d+|DipperPart_L\d+_p\d+|SynSub_q\d+)_r\d+")
 
-def parse_budget(edit_sequence: List[str]):
-    """Restituisce il budget richiesto a DIPPER per questa riga."""
-    match = BUDGET_PATTERN.search(str(edit_sequence))
-    if match is None:
-        return None
-    return int (match.group(1)), int(match.group(2))
+def parse_budget(edit_sequence: List[str]) -> bool:
+    """True se la riga è una parafrasi candidata (DIPPER, DIPPER parziale o sinonimi)."""
+    return CANDIDATE_PATTERN.search(str(edit_sequence)) is not None
 
 DIPPER_BUDGETS = [(20, 0), (40, 0), (60, 0), (40, 20), (60, 20), (60, 40)]  # (lexical, order)
 
@@ -105,12 +102,16 @@ def create_dpo_dataset(input_files: List[str], output_dir: str, model: str, targ
     #Misura quanti testi vengono scartati
     skipped = defaultdict(int)
 
-    for input_file in input_files:
+    for input_group in input_files:
+        # Gruppo = file dello stesso watermark e della stessa chiave (es. parafrasi DIPPER e sinonimi)
+        input_group = [input_group] if isinstance(input_group, str) else input_group
+        input_file = input_group[0]
         watermark = os.path.basename(input_file).split("_")[0]
         watermark_group = defaultdict(list)
-        for gen in ResponseLoader(input_file).load_all():
-            if gen.is_watermarked:
-                watermark_group[gen.id].append(gen)
+        for f in input_group:
+            for gen in ResponseLoader(f).load_all():
+                if gen.is_watermarked:
+                    watermark_group[gen.id].append(gen)
 
         # Un giro per ogni testo del file. watermark_group raggruppa le righe per id
         for _id in tqdm(watermark_group, desc=f"{input_file} L{target_lex}_0{target_order}"):
@@ -186,16 +187,24 @@ if __name__ == "__main__":
     parser.add_argument('--n_rejected', type=int, default=N_REJECTED)
     #Suffisso del nome della cartella di output
     parser.add_argument('--tag', type=str, default='')
+    # Suffissi dei file di candidate da unire per ogni watermark e chiave
+    parser.add_argument('--input_suffixes', nargs='+', default=['_dipper_rated'])
     args = parser.parse_args()
 
+    #Salva gli id di validazione. Questi testi sono esclusi dai dataset e usati in valutazione
     with open("data/val_ids.json", "w") as f:
         json.dump(sorted(VAL_IDS), f)
 
-    input_files = [f"{args.results_dir}/{wm}_dipper_rated{key}.tsv" for wm in args.watermarks for key in args.keys]
+    #Un file di parafrasi DIPPER per ogni combinazione watermark x chiave (3 x 3 = 9)
+    input_files = [[f"{args.results_dir}/{wm}{suff}{key}.tsv" for suff in args.input_suffixes]
+                   for wm in args.watermarks for key in args.keys]
+    #Budget da elaborare, trasformati da "L40,O20" a (40, 20)
     budgets = (DIPPER_BUDGETS if args.budgets is None
                else [tuple(int(x) for x in re.findall(r'\d+', b)) for b in args.budgets])
+    #Modello che verrà addestrato
     model = "Qwen/Qwen2.5-3B-Instruct"
 
+    #Un dataset per ogni budget, nella sua cartella
     for target_lex, target_order in budgets:
         output_dir = f"data/mix_dipper{args.tag}/L{target_lex}_O{target_order}/{model}"
         create_dpo_dataset(input_files, output_dir, model, target_lex, target_order,

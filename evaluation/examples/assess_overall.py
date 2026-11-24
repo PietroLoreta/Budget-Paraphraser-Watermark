@@ -25,6 +25,9 @@ DIPPER_BUDGETS = [(20, 0), (40, 0), (60, 0), (40, 20), (60, 20), (60, 40)]  # (l
 #Quante parafrasi DIPPER generare per ogni testo e per ogni budget
 DIPPER_REPEATS = 2
 
+#Budget della baseline Qwen non addestrato
+QWEN_BUDGETS = [(2, 0), (5, 0), (10, 0), (20, 0), (30, 0), (40, 0), (60, 0)]
+
 #Parafrasi parziali per i budget piccoli
 PARTIAL_FRACTIONS = []
 PARTIAL_LEX = 40
@@ -256,7 +259,7 @@ class RobustnessPipelineFactory:
         loaded = ModelLoader.from_name(model_name, device=device)
 
         sequences = {}
-        for lex, order in DIPPER_BUDGETS:
+        for lex, order in QWEN_BUDGETS:
             sequences[f'Budget_L{lex}_O{order}'] = [
                 BudgetLLMParaphraser(
                     model=loaded['model'],
@@ -435,9 +438,11 @@ def main():
         config_file = watermark_config_file
         #KGW e Unigram: la chiave è un singolo numero
         if "hash_key" in config:
-            config['hash_key'] = hash_key
-            with open(watermark_config_file, 'w') as f:
-                json.dump(config, f)
+            key_config = dict(config)
+            key_config['hash_key'] = hash_key
+            config_file = f'config/{args.algorithm}_key{hash_key}.json'
+            with open(config_file, 'w') as f:
+                json.dump(key_config, f)
         #SynthID: la chiave è una lista di 30 numeri. Se ne genera una nuova
         elif "keys" in config and hash_key != TEST_KEY:
             #Copia la configurazione per non modificare quella originale
