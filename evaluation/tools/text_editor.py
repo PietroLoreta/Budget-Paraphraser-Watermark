@@ -23,6 +23,7 @@ import copy
 import multiprocessing
 import random
 import re
+import string
 from multiprocessing import Process, Manager
 
 import nltk
@@ -462,6 +463,82 @@ class DipperParaphraser(TextEditor):
 
         #Risultato senza spazi all'inizio e alla fine del testo
         return output_text.strip()
+
+class PartialDipperParaphraser(TextEditor):
+    """Parafrasa con DIPPER solo una parte delle frasi del testo, per ottenere parafrasi con poche modifiche."""
+    def __init__(self, dipper: DipperParaphraser, fraction: float, seed: int = 0) -> None:
+        super().__init__()
+        #Parafrasatore DIPPER da applicare alle frasi scelte
+        self.dipper = dipper
+        #Quota di frasi da parafrasare
+        self.fraction = fraction
+        #Seme della scelta delle frasi
+        self.seed = seed
+
+    def edit(self, text: str, reference=None):
+        """Parafrasa le frasi scelte e restituisce il testo con le altre frasi invariate."""
+        sentences = sent_tokenize(" ".join(text.split()))
+        if not sentences:
+            return text
+        #Generatore inizializzato con seme e testo, così la scelta è riproducibile
+        rng = random.Random(f"{self.seed}-{text}")
+        #Sceglie frasi in ordine casuale finché si copre la quota richiesta
+        lengths = [len(s.split()) for s in sentences]
+        target = self.fraction * sum(lengths)
+        order = list(range(len(sentences)))
+        rng.shuffle(order)
+        chosen, covered = set(), 0
+        for i in order:
+            #Aggiunge la frase se avvicina alla quota invece di allontanarla
+            if chosen and  covered + lengths[i] / 2 > target:
+                continue
+            chosen.add(i)
+            covered += lengths[i]
+        #Ogni frase scelta viene parafrasata da sola e le altre restano identiche
+        out = [self.dipper.edit(s, reference) if i in chosen else s for i, s in enumerate(sentences)]
+        return " ".join(out).strip()
+
+class SparseSynonymSubstitution(TextEditor):
+    """Sostituisce una quota di parole, sparse in tutto il testo, con sinonimi scelti in base al contesto."""
+    def __init__(self, ratio: float, tokenizer, model, device='cuda', seed: int = 0, top_k: int = 50) -> None:
+        super().__init__()
+        #Quota di parole da sostituire
+        self.ratio = ratio
+        self.tokenizer = tokenizer
+        self.model = model
+        self.device = device
+        self.seed = seed
+        #Si cerca il sinonimo tra le top_k proposte
+        self.top_k = top_k
+
+    def edit(self, text: str, reference=None):
+        words = text.split()
+        rng = random.Random(f"{self.seed}-{text}")
+        #Parole sostituibili: solo lettere e almeno 4 caratteri
+        candidates = [i for i, w in enumerate(words)
+                      if (c := w.strip(string.punctuation)).isalpha() and len(c) >= 4 and wordnet.synsets(c.lower())]
+        n = min(len(candidates), round(self.ratio * len(words)))
+        for i in sorted(rng.sample(candidates, n)):
+            w = words[i]
+            core = w.strip(string.punctuation)
+            pre = w[:len(w) - len(w.lstrip(string.punctuation))]
+            post = w[len(w.rstrip(string.punctuation)):]
+            synonyms = {l.name().replace('_', ' ').lower() for s in wordnet.synsets(core.lower())
+                        for l in s.lemmas()} - {core.lower()}
+            masked = " ".join(words[:i] + [pre + self.tokenizer.mask_token + post] + words[i + 1:])
+            inputs = self.tokenizer(masked, return_tensors='pt', truncation=True, max_length=512).to(self.device)
+            pos = (inputs["input_ids"][0] == self.tokenizer.mask_token_id).nonzero()
+            if len(pos) == 0:
+                continue
+            with torch.no_grad():
+                logits = self.model(**inputs).logits[0, pos[0].item()]
+            #Si prende la prima proposta che è un sinonimo vero
+            for tid in torch.topk(logits, self.top_k).indices.tolist():
+                cand = self.tokenizer.convert_ids_to_tokens(tid)
+                if cand in synonyms:
+                    words[i] = pre + (cand.capitalize() if core[0].isupper() else cand) + post
+                    break
+        return " ".join(words)
 
 class WordDeletion(TextEditor):
     """Delete words randomly from the text."""

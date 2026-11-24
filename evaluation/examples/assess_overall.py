@@ -14,8 +14,8 @@ from evaluation.tools.text_quality_analyzer import GPTTextRater, LLMTextRater
 from evaluation.utils import ModelLoader, ModelConfig, _load_tokenizer
 from utils.transformers_config import TransformersConfig
 
-from evaluation.tools.text_editor import BudgetLLMParaphraser, TrimToLastSentenceTextEditor
-from transformers import T5Tokenizer, T5ForConditionalGeneration, AutoConfig
+from evaluation.tools.text_editor import BudgetLLMParaphraser, TrimToLastSentenceTextEditor, PartialDipperParaphraser, SparseSynonymSubstitution
+from transformers import T5Tokenizer, T5ForConditionalGeneration, AutoConfig, BertTokenizer, BertForMaskedLM
 
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 NUM_PARAPHRASES = 8
@@ -24,6 +24,16 @@ MAX_NEW_TOKENS = 512
 DIPPER_BUDGETS = [(20, 0), (40, 0), (60, 0), (40, 20), (60, 20), (60, 40)]  # (lexical, order)
 #Quante parafrasi DIPPER generare per ogni testo e per ogni budget
 DIPPER_REPEATS = 2
+
+#Parafrasi parziali per i budget piccoli
+PARTIAL_FRACTIONS = []
+PARTIAL_LEX = 40
+#Ripetizioni per quota
+PARTIAL_REPEATS = 4
+
+#Sostituzione di sinonimi sparsa per i budget piccoli
+SYNONYM_RATIOS = [0.02, 0.05, 0.1, 0.15, 0.2]
+SYNONYM_REPEATS = 4
 
 class RobustnessPipelineFactory:
     """Factory for creating watermark robustness evaluation pipelines."""
@@ -36,7 +46,9 @@ class RobustnessPipelineFactory:
                         filename: str = None,
                         paraphraser: str = None,
                         #La pipeline gira con un giudice Llama-3.1-8B
-                        no_judge: bool = False
+                        no_judge: bool = False,
+                        #Testi valutati insieme dal giudice
+                        judge_batch_size: int = 16
                         ) -> 'WatermarkRobustnessPipeline':
         """Create a pipeline with standard configuration."""
         edit_sequences = {}
@@ -46,11 +58,11 @@ class RobustnessPipelineFactory:
         elif mode == 're_evaluate':
             rating_metrics = RobustnessPipelineFactory._create_rating_metrics(self.devices[-3:])
             #L'originale (128) è pensato per un server multi-GPU
-            batch_size = 16
+            batch_size = judge_batch_size
         else:
             #In DIPPER il giudice non viene caricato: DIPPER e Llama-8B insieme non entrano nella GPU condivisa.
             #La qualità viene calcolata in un secondo passaggio quando DIPPER non è più in memoria
-            if mode in ['dipper_paraphrase', 'budget_paraphrase', 'llm_paraphrase'] or no_judge:
+            if mode in ['dipper_paraphrase', 'dipper_partial_paraphrase', 'budget_paraphrase', 'llm_paraphrase'] or no_judge:
                 rating_metrics = {}
             else:
                 rating_metrics = RobustnessPipelineFactory._create_rating_metrics(self.devices)
@@ -82,6 +94,9 @@ class RobustnessPipelineFactory:
             #Attacca con DIPPER i testi watermarkati già generati a tutti i budget di diversità
             elif mode == 'dipper_paraphrase':
                 edit_sequences = RobustnessPipelineFactory._create_dipper_sequences(devices)
+            #Parafrasi parziali per i budget piccoli
+            elif mode == 'dipper_partial_paraphrase':
+                edit_sequences = RobustnessPipelineFactory._create_partial_dipper_sequences(devices)
             elif mode == 'budget_paraphrase':
                 edit_sequences = RobustnessPipelineFactory._create_budget_sequences(paraphraser, devices)
             elif mode == 'llm_paraphrase':
@@ -93,7 +108,7 @@ class RobustnessPipelineFactory:
                                 rating_metrics=rating_metrics,
                                 filename=filename,
                                 batch_size=batch_size,
-                                max_batch_size=8)
+                                max_batch_size=min(8, batch_size))
         return WatermarkRobustnessPipeline(config)
 
     @staticmethod
@@ -202,6 +217,35 @@ class RobustnessPipelineFactory:
                         top_k=None
                     )
                 ]
+        return sequences
+
+    @staticmethod
+    def _create_partial_dipper_sequences(devices: List[str]) -> Dict:
+        """Candidate per i budget piccoli: sinonimi sparsi."""
+        device = devices[0]
+        sequences = {}
+        #Sostituzione di sinonimi sparsa: modifiche distribuite in tutto il testo
+        bert_tok = BertTokenizer.from_pretrained('bert-large-uncased')
+        bert = BertForMaskedLM.from_pretrained('bert-large-uncased').to(device).eval()
+        for ratio in SYNONYM_RATIOS:
+            for rep in range(SYNONYM_REPEATS):
+                name = f'SynSub_q{round(ratio * 100)}_r{rep}'
+                sequences[name] = [SparseSynonymSubstitution(ratio, bert_tok, bert, device=device, seed=rep)]
+        #Senza quote di frasi non si carica DIPPER
+        if not PARTIAL_FRACTIONS:
+            return sequences
+        tokenizer = T5Tokenizer.from_pretrained('google/t5-v1_1-xxl')
+        model = T5ForConditionalGeneration.from_pretrained(
+            'kalpeshk2011/dipper-paraphraser-xxl', torch_dtype=torch.bfloat16
+        ).to(device)
+        #Stessi parametri di generazione delle sequenze DIPPER complete
+        dipper = DipperParaphraser(tokenizer=tokenizer, model=model, device=device,
+                                   lex_diversity=PARTIAL_LEX, order_diversity=0, sent_interval=1,
+                                   max_new_tokens=256, do_sample=True, top_p=0.75, top_k=None)
+        for fraction in PARTIAL_FRACTIONS:
+            for rep in range(PARTIAL_REPEATS):
+                name = f'DipperPart_L{PARTIAL_LEX}_p{round(fraction * 100)}_r{rep}'
+                sequences[name] = [PartialDipperParaphraser(dipper, fraction=fraction, seed=rep)]
         return sequences
 
     @staticmethod
@@ -323,7 +367,7 @@ def main():
         type=str,
         default='end_to_end',
         choices=['end_to_end', 'generate_only', 'add_edits', 'base_paraphrase', 'gpt_judge', 'ensemble_paraphrase',
-                 're_evaluate', 'dipper_paraphrase', 'budget_paraphrase', 'llm_paraphrase']
+                 're_evaluate', 'dipper_paraphrase', 'dipper_partial_paraphrase', 'budget_paraphrase', 'llm_paraphrase']
     )
     parser.add_argument('--corpus', type=str, default='paper_conclusion', choices=['paper_conclusion', 'markmywords'])
     parser.add_argument('--dataset', type=str, default='eval', choices=['eval', 'train'])
@@ -339,6 +383,7 @@ def main():
     parser.add_argument('--ids_file', type=str, default=None)
     #Se presente, la pipeline gira senza giudice e i voti si calcolano dopo
     parser.add_argument('--no_judge', action='store_true')
+    parser.add_argument('--judge_batch_size', type=int, default=16)
     parser.add_argument(
         '--hash_keys',
         type=int,  # Specifies that each input should be converted to an integer
@@ -374,10 +419,15 @@ def main():
     watermark_config_file = f'config/{args.algorithm}.json'
     with open(watermark_config_file, 'r') as f:
         config = json.load(f)
+
+    #Dimensione del vocabolario del provider
+    provider_cfg = AutoConfig.from_pretrained(args.provider)
+    vocab_size = getattr(provider_cfg, 'text_config', provider_cfg).vocab_size
+
     #Chiave riservata al test
     TEST_KEY = 15485863
     hash_keys = args.hash_keys
-    if "hash_key" not in config and "keys" not in config:
+    if not any(k in config for k in ("hash_key", "key", "mapping_name")):
         hash_keys = [None]  # Just use the default hash key for unsupported algorithms
     #Un run completo della pipeline per ogni chiave
     for hash_key in hash_keys:
@@ -398,10 +448,25 @@ def main():
             config_file = f'config/{args.algorithm}_key{hash_key}.json'
             with open(config_file, 'w') as f:
                 json.dump(key_config, f)
-
-        #Dimensione del vocabolario del provider
-        provider_cfg = AutoConfig.from_pretrained(args.provider)
-        vocab_size = getattr(provider_cfg, 'text_config', provider_cfg).vocab_size
+        #EXPEdit: la chiave è un singolo numero, salvato in un config separato per ogni chiave
+        elif "key" in config:
+            key_config = dict(config)
+            key_config['key'] = hash_key
+            config_file = f'config/{args.algorithm}_key{hash_key}.json'
+            with open(config_file, 'w') as f:
+                json.dump(key_config, f)
+        #SIR: la chiave è la mappatura dei token, ognuna diversa e riproducibile
+        elif "mapping_name" in config:
+            key_config = dict(config)
+            mapping_file = f'watermark/sir/mapping/{config["scale_dimension"]}_mapping{vocab_size}_key{hash_key}.json'
+            if not os.path.exists(mapping_file):
+                rng = random.Random(hash_key)
+                with open(mapping_file, 'w') as f:
+                    json.dump([rng.randrange(config['scale_dimension']) for _ in range(vocab_size)], f)
+                key_config['mapping_name'] = mapping_file
+                config_file = f'config/{args.algorithm}_key{hash_key}.json'
+                with open(config_file, 'w') as f:
+                    json.dump(key_config, f)
 
         watermark_args = {
             'algorithm_name': args.algorithm,
@@ -425,7 +490,8 @@ def main():
             mode=args.mode,
             filename=f'{directory}/{args.algorithm}{suff}{hash_key}.tsv',
             paraphraser=args.paraphraser,
-            no_judge=args.no_judge
+            no_judge=args.no_judge,
+            judge_batch_size=args.judge_batch_size
         )
         if args.mode in ['generate_only', 'end_to_end']:
             pipeline.evaluate(watermark_args)
