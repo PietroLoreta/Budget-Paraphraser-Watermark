@@ -1,0 +1,17 @@
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode generate_only --no_judge --hash_keys 10
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode generate_only --no_judge --hash_keys 20
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode generate_only --no_judge --hash_keys 30
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode generate_only --no_judge --hash_keys 15485863
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode generate_only --no_judge --hash_keys 10
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode generate_only --no_judge --hash_keys 20
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode generate_only --no_judge --hash_keys 30
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode generate_only --no_judge --hash_keys 15485863
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm KGW --mode dipper_partial_paraphrase --hash_keys 10 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm KGW --mode dipper_partial_paraphrase --hash_keys 20 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm KGW --mode dipper_partial_paraphrase --hash_keys 30 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm Unigram --mode dipper_partial_paraphrase --hash_keys 10 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm Unigram --mode dipper_partial_paraphrase --hash_keys 20 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm Unigram --mode dipper_partial_paraphrase --hash_keys 30 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SynthID --mode dipper_partial_paraphrase --hash_keys 10 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SynthID --mode dipper_partial_paraphrase --hash_keys 20 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SynthID --mode dipper_partial_paraphrase --hash_keys 30 --suff _synonym

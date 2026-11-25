@@ -199,3 +199,4 @@ hf_cache/
 old/
 *.safetensors
 *.arrow
+leonardo_data.tar.gz

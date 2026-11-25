@@ -1,0 +1,14 @@
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode re_evaluate --input_suff _dipper --suff _dipper_rated --hash_keys 10
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 10
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode re_evaluate --input_suff _dipper --suff _dipper_rated --hash_keys 20
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 20
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode re_evaluate --input_suff _dipper --suff _dipper_rated --hash_keys 30
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 30
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode re_evaluate --input_suff _test_dipper --suff _test_dipper_rated --hash_keys 15485863
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode re_evaluate --input_suff _dipper --suff _dipper_rated --hash_keys 10
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 10
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode re_evaluate --input_suff _dipper --suff _dipper_rated --hash_keys 20
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 20
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode re_evaluate --input_suff _dipper --suff _dipper_rated --hash_keys 30
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 30
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode re_evaluate --input_suff _test_dipper --suff _test_dipper_rated --hash_keys 15485863

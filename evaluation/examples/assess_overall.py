@@ -26,7 +26,7 @@ DIPPER_BUDGETS = [(20, 0), (40, 0), (60, 0), (40, 20), (60, 20), (60, 40)]  # (l
 DIPPER_REPEATS = 2
 
 #Budget della baseline Qwen non addestrato
-QWEN_BUDGETS = [(2, 0), (5, 0), (10, 0), (20, 0), (30, 0), (40, 0), (60, 0)]
+QWEN_BUDGETS = [(2, 0), (5, 0), (10, 0), (20, 0), (30, 0), (40, 0), (60, 0), (40, 20), (60, 20), (60, 40)]
 
 #Parafrasi parziali per i budget piccoli
 PARTIAL_FRACTIONS = []
@@ -359,6 +359,13 @@ class RobustnessPipelineFactory:
             )
         }
 
+def write_config(path, data):
+    """Scrive un config in modo atomico: più job in parallelo non leggono mai un file scritto a metà."""
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, 'w') as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
 def main():
     import argparse
     from torch.cuda import device_count
@@ -430,7 +437,7 @@ def main():
     #Chiave riservata al test
     TEST_KEY = 15485863
     hash_keys = args.hash_keys
-    if not any(k in config for k in ("hash_key", "key", "mapping_name")):
+    if not any(k in config for k in ("hash_key", "keys", "key", "mapping_name")):
         hash_keys = [None]  # Just use the default hash key for unsupported algorithms
     #Un run completo della pipeline per ogni chiave
     for hash_key in hash_keys:
@@ -441,8 +448,7 @@ def main():
             key_config = dict(config)
             key_config['hash_key'] = hash_key
             config_file = f'config/{args.algorithm}_key{hash_key}.json'
-            with open(config_file, 'w') as f:
-                json.dump(key_config, f)
+            write_config(config_file, key_config)
         #SynthID: la chiave è una lista di 30 numeri. Se ne genera una nuova
         elif "keys" in config and hash_key != TEST_KEY:
             #Copia la configurazione per non modificare quella originale
@@ -451,15 +457,13 @@ def main():
             key_config['keys'] = random.Random(hash_key).sample(range(1000), len(config['keys']))
             #Salva la configurazione in un file separato
             config_file = f'config/{args.algorithm}_key{hash_key}.json'
-            with open(config_file, 'w') as f:
-                json.dump(key_config, f)
+            write_config(config_file, key_config)
         #EXPEdit: la chiave è un singolo numero, salvato in un config separato per ogni chiave
         elif "key" in config:
             key_config = dict(config)
             key_config['key'] = hash_key
             config_file = f'config/{args.algorithm}_key{hash_key}.json'
-            with open(config_file, 'w') as f:
-                json.dump(key_config, f)
+            write_config(config_file, key_config)
         #SIR: la chiave è la mappatura dei token, ognuna diversa e riproducibile
         elif "mapping_name" in config:
             key_config = dict(config)
@@ -470,8 +474,7 @@ def main():
                     json.dump([rng.randrange(config['scale_dimension']) for _ in range(vocab_size)], f)
                 key_config['mapping_name'] = mapping_file
                 config_file = f'config/{args.algorithm}_key{hash_key}.json'
-                with open(config_file, 'w') as f:
-                    json.dump(key_config, f)
+                write_config(config_file, key_config)
 
         watermark_args = {
             'algorithm_name': args.algorithm,

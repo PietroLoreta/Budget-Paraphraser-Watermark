@@ -1,0 +1,60 @@
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm KGW --mode llm_paraphrase --paraphraser models/per_wm/KGW/L2_O0 --hash_keys 15485863 --suff _test_perwm_L2_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm KGW --mode llm_paraphrase --paraphraser models/per_wm/KGW/L5_O0 --hash_keys 15485863 --suff _test_perwm_L5_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm KGW --mode llm_paraphrase --paraphraser models/per_wm/KGW/L10_O0 --hash_keys 15485863 --suff _test_perwm_L10_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm KGW --mode llm_paraphrase --paraphraser models/per_wm/KGW/L20_O0 --hash_keys 15485863 --suff _test_perwm_L20_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm KGW --mode llm_paraphrase --paraphraser models/per_wm/KGW/L30_O0 --hash_keys 15485863 --suff _test_perwm_L30_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm KGW --mode llm_paraphrase --paraphraser models/per_wm/KGW/L40_O0 --hash_keys 15485863 --suff _test_perwm_L40_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm KGW --mode llm_paraphrase --paraphraser models/per_wm/KGW/L60_O0 --hash_keys 15485863 --suff _test_perwm_L60_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm KGW --mode llm_paraphrase --paraphraser models/per_wm/KGW/L40_O20 --hash_keys 15485863 --suff _test_perwm_L40_O20
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm KGW --mode llm_paraphrase --paraphraser models/per_wm/KGW/L60_O20 --hash_keys 15485863 --suff _test_perwm_L60_O20
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm KGW --mode llm_paraphrase --paraphraser models/per_wm/KGW/L60_O40 --hash_keys 15485863 --suff _test_perwm_L60_O40
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm KGW --mode budget_paraphrase --paraphraser Qwen/Qwen2.5-3B-Instruct --hash_keys 15485863 --suff _test_qwen
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm KGW --mode dipper_partial_paraphrase --hash_keys 15485863 --suff _test_synonym
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm Unigram --mode llm_paraphrase --paraphraser models/per_wm/Unigram/L2_O0 --hash_keys 15485863 --suff _test_perwm_L2_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm Unigram --mode llm_paraphrase --paraphraser models/per_wm/Unigram/L5_O0 --hash_keys 15485863 --suff _test_perwm_L5_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm Unigram --mode llm_paraphrase --paraphraser models/per_wm/Unigram/L10_O0 --hash_keys 15485863 --suff _test_perwm_L10_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm Unigram --mode llm_paraphrase --paraphraser models/per_wm/Unigram/L20_O0 --hash_keys 15485863 --suff _test_perwm_L20_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm Unigram --mode llm_paraphrase --paraphraser models/per_wm/Unigram/L30_O0 --hash_keys 15485863 --suff _test_perwm_L30_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm Unigram --mode llm_paraphrase --paraphraser models/per_wm/Unigram/L40_O0 --hash_keys 15485863 --suff _test_perwm_L40_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm Unigram --mode llm_paraphrase --paraphraser models/per_wm/Unigram/L60_O0 --hash_keys 15485863 --suff _test_perwm_L60_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm Unigram --mode llm_paraphrase --paraphraser models/per_wm/Unigram/L40_O20 --hash_keys 15485863 --suff _test_perwm_L40_O20
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm Unigram --mode llm_paraphrase --paraphraser models/per_wm/Unigram/L60_O20 --hash_keys 15485863 --suff _test_perwm_L60_O20
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm Unigram --mode llm_paraphrase --paraphraser models/per_wm/Unigram/L60_O40 --hash_keys 15485863 --suff _test_perwm_L60_O40
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm Unigram --mode budget_paraphrase --paraphraser Qwen/Qwen2.5-3B-Instruct --hash_keys 15485863 --suff _test_qwen
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm Unigram --mode dipper_partial_paraphrase --hash_keys 15485863 --suff _test_synonym
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SynthID --mode llm_paraphrase --paraphraser models/per_wm/SynthID/L2_O0 --hash_keys 15485863 --suff _test_perwm_L2_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SynthID --mode llm_paraphrase --paraphraser models/per_wm/SynthID/L5_O0 --hash_keys 15485863 --suff _test_perwm_L5_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SynthID --mode llm_paraphrase --paraphraser models/per_wm/SynthID/L10_O0 --hash_keys 15485863 --suff _test_perwm_L10_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SynthID --mode llm_paraphrase --paraphraser models/per_wm/SynthID/L20_O0 --hash_keys 15485863 --suff _test_perwm_L20_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SynthID --mode llm_paraphrase --paraphraser models/per_wm/SynthID/L30_O0 --hash_keys 15485863 --suff _test_perwm_L30_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SynthID --mode llm_paraphrase --paraphraser models/per_wm/SynthID/L40_O0 --hash_keys 15485863 --suff _test_perwm_L40_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SynthID --mode llm_paraphrase --paraphraser models/per_wm/SynthID/L60_O0 --hash_keys 15485863 --suff _test_perwm_L60_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SynthID --mode llm_paraphrase --paraphraser models/per_wm/SynthID/L40_O20 --hash_keys 15485863 --suff _test_perwm_L40_O20
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SynthID --mode llm_paraphrase --paraphraser models/per_wm/SynthID/L60_O20 --hash_keys 15485863 --suff _test_perwm_L60_O20
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SynthID --mode llm_paraphrase --paraphraser models/per_wm/SynthID/L60_O40 --hash_keys 15485863 --suff _test_perwm_L60_O40
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SynthID --mode budget_paraphrase --paraphraser Qwen/Qwen2.5-3B-Instruct --hash_keys 15485863 --suff _test_qwen
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SynthID --mode dipper_partial_paraphrase --hash_keys 15485863 --suff _test_synonym
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode llm_paraphrase --paraphraser models/per_wm/SIR/L2_O0 --hash_keys 15485863 --suff _test_perwm_L2_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode llm_paraphrase --paraphraser models/per_wm/SIR/L5_O0 --hash_keys 15485863 --suff _test_perwm_L5_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode llm_paraphrase --paraphraser models/per_wm/SIR/L10_O0 --hash_keys 15485863 --suff _test_perwm_L10_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode llm_paraphrase --paraphraser models/per_wm/SIR/L20_O0 --hash_keys 15485863 --suff _test_perwm_L20_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode llm_paraphrase --paraphraser models/per_wm/SIR/L30_O0 --hash_keys 15485863 --suff _test_perwm_L30_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode llm_paraphrase --paraphraser models/per_wm/SIR/L40_O0 --hash_keys 15485863 --suff _test_perwm_L40_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode llm_paraphrase --paraphraser models/per_wm/SIR/L60_O0 --hash_keys 15485863 --suff _test_perwm_L60_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode llm_paraphrase --paraphraser models/per_wm/SIR/L40_O20 --hash_keys 15485863 --suff _test_perwm_L40_O20
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode llm_paraphrase --paraphraser models/per_wm/SIR/L60_O20 --hash_keys 15485863 --suff _test_perwm_L60_O20
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode llm_paraphrase --paraphraser models/per_wm/SIR/L60_O40 --hash_keys 15485863 --suff _test_perwm_L60_O40
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode budget_paraphrase --paraphraser Qwen/Qwen2.5-3B-Instruct --hash_keys 15485863 --suff _test_qwen
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode dipper_partial_paraphrase --hash_keys 15485863 --suff _test_synonym
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode llm_paraphrase --paraphraser models/per_wm/EXP/L2_O0 --hash_keys 15485863 --suff _test_perwm_L2_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode llm_paraphrase --paraphraser models/per_wm/EXP/L5_O0 --hash_keys 15485863 --suff _test_perwm_L5_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode llm_paraphrase --paraphraser models/per_wm/EXP/L10_O0 --hash_keys 15485863 --suff _test_perwm_L10_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode llm_paraphrase --paraphraser models/per_wm/EXP/L20_O0 --hash_keys 15485863 --suff _test_perwm_L20_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode llm_paraphrase --paraphraser models/per_wm/EXP/L30_O0 --hash_keys 15485863 --suff _test_perwm_L30_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode llm_paraphrase --paraphraser models/per_wm/EXP/L40_O0 --hash_keys 15485863 --suff _test_perwm_L40_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode llm_paraphrase --paraphraser models/per_wm/EXP/L60_O0 --hash_keys 15485863 --suff _test_perwm_L60_O0
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode llm_paraphrase --paraphraser models/per_wm/EXP/L40_O20 --hash_keys 15485863 --suff _test_perwm_L40_O20
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode llm_paraphrase --paraphraser models/per_wm/EXP/L60_O20 --hash_keys 15485863 --suff _test_perwm_L60_O20
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode llm_paraphrase --paraphraser models/per_wm/EXP/L60_O40 --hash_keys 15485863 --suff _test_perwm_L60_O40
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode budget_paraphrase --paraphraser Qwen/Qwen2.5-3B-Instruct --hash_keys 15485863 --suff _test_qwen
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode dipper_partial_paraphrase --hash_keys 15485863 --suff _test_synonym

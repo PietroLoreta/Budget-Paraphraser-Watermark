@@ -1,0 +1,23 @@
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode dipper_paraphrase --hash_keys 10 --suff _dipper
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode dipper_partial_paraphrase --hash_keys 10 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode dipper_paraphrase --hash_keys 20 --suff _dipper
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode dipper_partial_paraphrase --hash_keys 20 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode dipper_paraphrase --hash_keys 30 --suff _dipper
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SIR --mode dipper_partial_paraphrase --hash_keys 30 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm SIR --mode dipper_paraphrase --hash_keys 15485863 --suff _test_dipper
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode dipper_paraphrase --hash_keys 10 --suff _dipper
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode dipper_partial_paraphrase --hash_keys 10 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode dipper_paraphrase --hash_keys 20 --suff _dipper
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode dipper_partial_paraphrase --hash_keys 20 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode dipper_paraphrase --hash_keys 30 --suff _dipper
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm EXP --mode dipper_partial_paraphrase --hash_keys 30 --suff _synonym
+python3 evaluation/examples/assess_overall.py --corpus paper_conclusion --algorithm EXP --mode dipper_paraphrase --hash_keys 15485863 --suff _test_dipper
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm KGW --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 10
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm KGW --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 20
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm KGW --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 30
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm Unigram --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 10
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm Unigram --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 20
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm Unigram --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 30
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SynthID --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 10
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SynthID --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 20
+python3 evaluation/examples/assess_overall.py --corpus markmywords --dataset train --samples 400 --algorithm SynthID --mode re_evaluate --input_suff _synonym --suff _synonym_rated --hash_keys 30
